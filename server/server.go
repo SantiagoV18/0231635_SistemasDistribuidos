@@ -2,122 +2,73 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"log"
 	"net/http"
-	"sync"
+	"strconv"
+	/*
+		"github.com/your/project/api" // api para Record
+		"github.com/your/project/log" *///preguntar sobre esto
 )
-
-const (
-	port = ":8080"
-)
-
-type Record struct {
-	Value  string `json:"value"`
-	Offset int64  `json:"offset"`
-}
-
-type ProduceRequest struct {
-	Record Record `json:"record"`
-}
-
-type ProduceResponse struct {
-	Offset int64 `json:"offset"`
-}
-
-type ConsumeRequest struct {
-	Offset int64 `json:"offset"`
-}
-
-type ConsumeResponse struct {
-	Record Record `json:"record"`
-}
 
 type Server struct {
-	mu      sync.Mutex
-	records []Record
+	log *log.Log
 }
 
-func (s *Server) decodeProduceRequest(r *http.Request) (*ProduceRequest, error) {
-	var req ProduceRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
-	return &req, err
+func NewServer(dir string, c log.Config) (*Server, error) {
+	l, err := log.NewLog(dir, c)
+	if err != nil {
+		return nil, err
+	}
+	return &Server{log: l}, nil
 }
 
-func (s *Server) saveRecord(record Record) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	record.Offset = int64(len(s.records))
-	s.records = append(s.records, record)
+func (s *Server) Start() error {
+	http.HandleFunc("/append", s.handleAppend)
+	http.HandleFunc("/read", s.handleRead)
+	http.HandleFunc("/truncate", s.handleTruncate)
+	return http.ListenAndServe(":8080", nil)
 }
 
-func (s *Server) encodeProduceResponse(w http.ResponseWriter, offset int64) error {
-	res := ProduceResponse{Offset: offset}
-	return json.NewEncoder(w).Encode(res)
-}
-
-func (s *Server) Produce(w http.ResponseWriter, r *http.Request) {
-	req, err := s.decodeProduceRequest(r)
+func (s *Server) handleAppend(w http.ResponseWriter, r *http.Request) {
+	record := &api.Record{}
+	err := json.NewDecoder(r.Body).Decode(record)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	record := req.Record
-	s.saveRecord(record)
-
-	err = s.encodeProduceResponse(w, record.Offset)
+	off, err := s.log.Append(record)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	w.Write([]byte(fmt.Sprintf("Appended record at offset %d", off)))
 }
 
-func (s *Server) decodeConsumeRequest(r *http.Request) (*ConsumeRequest, error) {
-	var req ConsumeRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
-	return &req, err
-}
-
-func (s *Server) getRecordByOffset(offset int64) (*Record, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if offset >= int64(len(s.records)) {
-		return nil, errors.New("record not found")
-	}
-	return &s.records[offset], nil
-}
-
-func (s *Server) encodeConsumeResponse(w http.ResponseWriter, record *Record) error {
-	res := ConsumeResponse{Record: *record}
-	return json.NewEncoder(w).Encode(res)
-}
-
-func (s *Server) Consume(w http.ResponseWriter, r *http.Request) {
-	req, err := s.decodeConsumeRequest(r)
+func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
+	off, err := strconv.ParseUint(r.URL.Query().Get("offset"), 10, 64)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	record, err := s.getRecordByOffset(req.Offset)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-
-	err = s.encodeConsumeResponse(w, record)
+	record, err := s.log.Read(off)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	json.NewEncoder(w).Encode(record)
 }
 
-func main() {
-	server := &Server{}
-
-	http.HandleFunc("/produce", server.Produce)
-	http.HandleFunc("/consume", server.Consume)
-
-	log.Fatal(http.ListenAndServe(port, nil))
+func (s *Server) handleTruncate(w http.ResponseWriter, r *http.Request) {
+	lowest, err := strconv.ParseUint(r.URL.Query().Get("lowest"), 10, 64)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = s.log.Truncate(lowest)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Write([]byte("Truncated log successfully"))
 }
