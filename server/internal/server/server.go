@@ -1,131 +1,103 @@
-package main
+package server
 
 import (
-	"encoding/json"
-	"log"
-	"net/http"
+	"context"
 
-	"github.com/gorilla/mux"
+	api "github.com/SantiagoV18/0231635_SistemasDistribuidos/server/api/v1"
+	"google.golang.org/grpc"
 )
 
-type Entry struct {
-	Value  string `json:"value"`
-	Offset uint64 `json:"offset"`
+type Config struct {
+	CommitLog CommitLog
 }
 
-type AppendRequest struct {
-	Entry Entry `json:"entry"`
+var _ api.LogServer = (*grpcServer)(nil)
+
+type grpcServer struct {
+	api.UnimplementedLogServer
+	*Config
 }
 
-type AppendResponse struct {
-	Offset uint64 `json:"offset"`
-}
-
-type FetchRequest struct {
-	Offset uint64 `json:"offset"`
-}
-
-type FetchResponse struct {
-	Entry Entry `json:"entry"`
-}
-
-type DataLog struct {
-	records []Entry
-}
-
-func NewLog() *DataLog {
-	return &DataLog{}
-}
-
-func (log *DataLog) Append(record Entry) (uint64, error) {
-	record.Offset = uint64(len(log.records))
-	log.records = append(log.records, record)
-	return record.Offset, nil
-}
-
-func (log *DataLog) Read(offset uint64) (Entry, error) {
-	if offset >= uint64(len(log.records)) {
-		return Entry{}, ErrOffsetNotFound
+func newgrpcServer(config *Config) (srv *grpcServer, err error) {
+	srv = &grpcServer{
+		Config: config,
 	}
-	return log.records[offset], nil
+	return srv, nil
 }
 
-var ErrOffsetNotFound = &ErrNotFound{"offset not found"}
-
-type ErrNotFound struct {
-	Msg string
-}
-
-func (e *ErrNotFound) Error() string {
-	return e.Msg
-}
-
-type WebServer struct {
-	Log *DataLog
-}
-
-func NewHTTPServer(addr string) *http.Server {
-	server := newWebServer()
-	router := mux.NewRouter()
-	router.HandleFunc("/append", server.handleAppend).Methods("POST")
-	router.HandleFunc("/fetch", server.handleFetch).Methods("GET")
-	return &http.Server{
-		Addr:    addr,
-		Handler: router,
-	}
-}
-
-func newWebServer() *WebServer {
-	return &WebServer{
-		Log: NewLog(),
-	}
-}
-
-func (s *WebServer) handleAppend(w http.ResponseWriter, r *http.Request) {
-	var req AppendRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
+// register the server with the gRPC server
+func NewGRPCServer(config *Config) (*grpc.Server, error) {
+	gsrv := grpc.NewServer()
+	srv, err := newgrpcServer(config)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return nil, err
 	}
-	offset, err := s.Log.Append(req.Entry)
+	api.RegisterLogServer(gsrv, srv)
+	return gsrv, nil
+}
+
+func (s *grpcServer) Produce(ctx context.Context, req *api.ProduceRequest) (
+	*api.ProduceResponse, error) {
+	offset, err := s.CommitLog.Append(req.Record)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
-	res := AppendResponse{Offset: offset}
-	err = json.NewEncoder(w).Encode(res)
+	return &api.ProduceResponse{Offset: offset}, nil
+}
+
+func (s *grpcServer) Consume(ctx context.Context, req *api.ConsumeRequest) (
+	*api.ConsumeResponse, error) {
+	record, err := s.CommitLog.Read(req.Offset)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
+	}
+	return &api.ConsumeResponse{Record: record}, nil
+}
+
+func (s *grpcServer) ProduceStream(
+	stream api.Log_ProduceStreamServer,
+) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		res, err := s.Produce(stream.Context(), req)
+		if err != nil {
+			return err
+		}
+		if err = stream.Send(res); err != nil {
+			return err
+		}
 	}
 }
 
-func (s *WebServer) handleFetch(w http.ResponseWriter, r *http.Request) {
-	var req FetchRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	record, err := s.Log.Read(req.Offset)
-	if err == ErrOffsetNotFound {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	res := FetchResponse{Entry: record}
-	err = json.NewEncoder(w).Encode(res)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+func (s *grpcServer) ConsumeStream(
+	req *api.ConsumeRequest,
+	stream api.Log_ConsumeStreamServer,
+) error {
+	for {
+		select {
+		case <-stream.Context().Done():
+			return nil
+		default:
+			res, err := s.Consume(stream.Context(), req)
+			switch err.(type) {
+			case nil:
+			case api.ErrOffsetOutOfRange:
+				continue
+			default:
+				return err
+			}
+			if err = stream.Send(res); err != nil {
+				return err
+			}
+			req.Offset++
+		}
 	}
 }
 
-func main() {
-	server := NewHTTPServer(":8080")
-	log.Fatal(server.ListenAndServe())
+type CommitLog interface {
+	Append(*api.Record) (uint64, error)
+	Read(uint64) (*api.Record, error)
 }

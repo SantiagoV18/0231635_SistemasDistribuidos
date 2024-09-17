@@ -5,7 +5,7 @@ import (
 	"os"
 	"path"
 
-	api "github.com/SantiagoV18/0231635_SistemasDistribuidos/server/api/v1" //proto buff files needed; next commit
+	api "github.com/SantiagoV18/0231635_SistemasDistribuidos/server/api/v1"
 	"google.golang.org/protobuf/proto"
 )
 
