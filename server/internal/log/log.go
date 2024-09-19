@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	api "server/api/v1"
 )
 
 type Log struct {

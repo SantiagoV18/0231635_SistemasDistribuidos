@@ -3,7 +3,8 @@ package server
 import (
 	"context"
 
-	api "github.com/SantiagoV18/0231635_SistemasDistribuidos/server/api/v1"
+	api "server/api/v1"
+
 	"google.golang.org/grpc"
 )
 

@@ -6,8 +6,9 @@ import (
 	"net"
 	"testing"
 
-	api "github.com/SantiagoV18/0231635_SistemasDistribuidos/server/api/v1"
-	"github.com/SantiagoV18/0231635_SistemasDistribuidos/server/internal/log"
+	api "server/api/v1"
+	"server/internal/log"
+
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )

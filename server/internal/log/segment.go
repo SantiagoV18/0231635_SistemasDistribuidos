@@ -5,7 +5,8 @@ import (
 	"os"
 	"path"
 
-	api "github.com/SantiagoV18/0231635_SistemasDistribuidos/server/api/v1"
+	api "server/api/v1"
+
 	"google.golang.org/protobuf/proto"
 )
 
@@ -114,14 +115,6 @@ func (s *segment) Remove() error {
 		return err
 	}
 	return nil
-}
-
-func nearestMultiple(j, k uint64) uint64 {
-	if j >= 0 {
-		return (j / k) * k
-	}
-	return ((j - k + 1) / k) * k
-
 }
 
 //
