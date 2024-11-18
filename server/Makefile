@@ -2,67 +2,78 @@
 CONFIG_PATH=${HOME}/0231635_SistemasDistribuidos/server
 
 .PHONY: init
-
 init:
 	mkdir -p ${CONFIG_PATH}
 
 .PHONY: gencert
-# gencert
-# First creates the bare certificate, it is just the base certificate that others will differ from
-# Then creates the server certificate, this allows our server certification
-# Finally we create the client certificate this allows two way authentication
 gencert:
 	cfssl gencert \
-		-initca CA/ca-csr.json | cfssljson -bare ca
+		-initca test/ca-csr.json | cfssljson -bare ca
 
 	cfssl gencert \
 		-ca=ca.pem \
 		-ca-key=ca-key.pem \
-		-config=CA/ca-config.json \
+		-config=test/ca-config.json \
 		-profile=server \
-		CA/server-csr.json | cfssljson -bare server
+		test/server-csr.json | cfssljson -bare server
+# END: begin
 
+# START: client
 	cfssl gencert \
 		-ca=ca.pem \
 		-ca-key=ca-key.pem \
-		-config=CA/ca-config.json \
+		-config=test/ca-config.json \
 		-profile=client \
-		CA/client-csr.json | cfssljson -bare client
+		test/client-csr.json | cfssljson -bare client
+# END: client
 
+# START: multi_client
 	cfssl gencert \
 		-ca=ca.pem \
 		-ca-key=ca-key.pem \
-		-config=CA/ca-config.json \
+		-config=test/ca-config.json \
 		-profile=client \
 		-cn="root" \
-		CA/client-csr.json | cfssljson -bare root-client
+		test/client-csr.json | cfssljson -bare root-client
 
 	cfssl gencert \
 		-ca=ca.pem \
 		-ca-key=ca-key.pem \
-		-config=CA/ca-config.json \
+		-config=test/ca-config.json \
 		-profile=client \
 		-cn="nobody" \
-		CA/client-csr.json | cfssljson -bare nobody-client
+		test/client-csr.json | cfssljson -bare nobody-client
+# END: multi_client
+
+# START: begin
 	mv *.pem *.csr ${CONFIG_PATH}
 
-compile:
-	protoc api/v1/*.proto \
-					--go_out=.\
-					--go_opt=paths=source_relative \
-					--proto_path=.
+# END: begin
+# START: auth
 $(CONFIG_PATH)/model.conf:
-	cp CA/model.conf $(CONFIG_PATH)/model.conf
+	cp test/model.conf $(CONFIG_PATH)/model.conf
 
 $(CONFIG_PATH)/policy.csv:
-	cp CA/policy.csv $(CONFIG_PATH)/policy.csv
+	cp test/policy.csv $(CONFIG_PATH)/policy.csv
 
+# START: begin
+.PHONY: test
+# END: auth
+test:
+# END: begin
+# START: auth
 test: $(CONFIG_PATH)/policy.csv $(CONFIG_PATH)/model.conf
+#: START: begin
 	go test -race ./...
-compile_rpc:
+# END: auth
+
+.PHONY: compile
+compile:
 	protoc api/v1/*.proto \
-	--go_out=. \
-	--go_opt=paths=source_relative \
-    --go-grpc_out=. \
-	--go-grpc_opt=paths=source_relative \
-	--proto_path=.
+		--go_out=. \
+		--go-grpc_out=. \
+		--go_opt=paths=source_relative \
+		--go-grpc_opt=paths=source_relative \
+		--proto_path=.
+
+# END: begin
